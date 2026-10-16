@@ -63,6 +63,7 @@ public partial class MainWindow : Window
             VerifyDestCombo.SelectedItem = Find(vdst) ?? DestCombo.SelectedItem;
             ScanDiskCombo.SelectedItem = Find(scan) ?? SourceCombo.SelectedItem;
             FormatDiskCombo.SelectedItem = Find(fmt) ?? DefaultFormatDisk();
+            await LoadPartitionsAsync();
 
             Status(reason ?? $"Found {_disks.Count} disk(s).");
         }
@@ -116,15 +117,18 @@ public partial class MainWindow : Window
 
     private void Tab_Checked(object sender, RoutedEventArgs e)
     {
-        if (ClonePage == null || VerifyPage == null || ScanPage == null || FormatPage == null || PrefsPage == null || DiskCard == null) return;
+        if (ClonePage == null || VerifyPage == null || ScanPage == null || FormatPage == null || PartitionsPage == null || PrefsPage == null || DiskCard == null) return;
         bool clone = CloneTab.IsChecked == true, verify = VerifyTab.IsChecked == true, prefs = PrefsTab.IsChecked == true;
         ClonePage.Visibility = clone ? Visibility.Visible : Visibility.Collapsed;
         VerifyPage.Visibility = verify ? Visibility.Visible : Visibility.Collapsed;
         ScanPage.Visibility = ScanTab.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         FormatPage.Visibility = FormatTab.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        bool parts = PartitionsTab.IsChecked == true;
+        PartitionsPage.Visibility = parts ? Visibility.Visible : Visibility.Collapsed;
         if (sender is RadioButton { ToolTip: string name } && PageTitle != null) PageTitle.Text = name;
         PrefsPage.Visibility = prefs ? Visibility.Visible : Visibility.Collapsed;
-        DiskCard.Visibility = prefs ? Visibility.Collapsed : Visibility.Visible;
+        // Preferences and Partitions use the full height; Partitions shows every disk itself.
+        DiskCard.Visibility = prefs || parts ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private void Cancel_Click(object sender, RoutedEventArgs e)
@@ -144,6 +148,8 @@ public partial class MainWindow : Window
         // Page tabs stay clickable while busy: every action button is disabled anyway, and a locked tab
         // strip could strand you on a page (e.g. Preferences) until the job finished.
         CancelButton.IsEnabled = busy;
+        if (busy) { PartResizePanel.IsEnabled = false; PartResizeButton.IsEnabled = false; }
+        else RestorePartitionControls();
         if (!busy) Progress.Value = 0;
         if (!busy && _closeRequested) Dispatcher.BeginInvoke(Close);
     }

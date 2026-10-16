@@ -35,6 +35,8 @@
                              Style="{StaticResource NavButton}" GroupName="pages" Checked="Tab_Checked"/>
                 <RadioButton x:Name="FormatTab" Tag="&#xE75C;" ToolTip="Format" AutomationProperties.Name="Format"
                              Style="{StaticResource NavButton}" GroupName="pages" Checked="Tab_Checked"/>
+                <RadioButton x:Name="PartitionsTab" Tag="&#xEDA2;" ToolTip="Partitions" AutomationProperties.Name="Partitions"
+                             Style="{StaticResource NavButton}" GroupName="pages" Checked="Tab_Checked"/>
             </StackPanel>
         </DockPanel>
     </Border>
@@ -466,6 +468,73 @@
 
             <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
                 <Button x:Name="FormatButton" Content="Format disk" Style="{StaticResource DangerButton}" Click="Format_Click"/>
+            </StackPanel>
+        </Grid>
+
+        <!-- ================= PARTITIONS PAGE (Disk Management-style) ================= -->
+        <Grid Grid.Row="1" Grid.RowSpan="2" x:Name="PartitionsPage" Visibility="Collapsed">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <Border Style="{StaticResource Card}" Margin="0,0,0,12" Padding="12">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <Grid Margin="4,0,4,8">
+                        <TextBlock Text="DISK LAYOUT · click a partition to resize it" Style="{StaticResource SectionTitle}" Margin="0"/>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                            <Border Width="12" Height="12" CornerRadius="2" Background="#FF3C78D8" Margin="0,0,6,0"/>
+                            <TextBlock Text="Partition" Style="{StaticResource Caption}" Margin="0,0,14,0"/>
+                            <Border Width="12" Height="12" CornerRadius="2" Background="#FF0A0A0A"
+                                    BorderBrush="{StaticResource LineBrush}" BorderThickness="1" Margin="0,0,6,0"/>
+                            <TextBlock Text="Unallocated" Style="{StaticResource Caption}"/>
+                        </StackPanel>
+                    </Grid>
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel x:Name="PartitionDisksPanel"/>
+                    </ScrollViewer>
+                </Grid>
+            </Border>
+
+            <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0,0,0,12">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="24"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel>
+                        <TextBlock Text="SELECTED" Style="{StaticResource SectionTitle}"/>
+                        <TextBlock x:Name="PartTitle" Text="Nothing selected" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                        <TextBlock x:Name="PartText" Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,4,0,0"
+                                   Text="Like Disk Management: a partition can be shrunk, or extended into unallocated space directly after it."/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2" x:Name="PartResizePanel" IsEnabled="False">
+                        <TextBlock Text="NEW SIZE" Style="{StaticResource SectionTitle}"/>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBox x:Name="PartSizeBox" Width="110" MaxLength="10" TextChanged="PartSizeBox_TextChanged"
+                                     AutomationProperties.Name="New size in GB"/>
+                            <TextBlock Text="GB" VerticalAlignment="Center" Margin="8,0,16,0"/>
+                            <Button x:Name="PartMinButton" Content="Smallest" Style="{StaticResource SmallButton}" Margin="0,0,8,0"
+                                    Click="PartMin_Click" ToolTip="Shrink as far as Windows allows"/>
+                            <Button x:Name="PartMaxButton" Content="Largest" Style="{StaticResource SmallButton}"
+                                    Click="PartMax_Click" ToolTip="Extend into all free space directly after it"/>
+                        </StackPanel>
+                        <Slider x:Name="PartSlider" Margin="0,10,0,0" ValueChanged="PartSlider_ValueChanged"
+                                IsSnapToTickEnabled="False" AutomationProperties.Name="New size"/>
+                        <TextBlock x:Name="PartRangeText" Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button x:Name="PartResizeButton" Content="Resize" Style="{StaticResource AccentButton}" IsEnabled="False"
+                        Click="PartResize_Click"/>
             </StackPanel>
         </Grid>
 
