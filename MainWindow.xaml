@@ -144,6 +144,9 @@
                         <CheckBox x:Name="DryRunCheck" IsChecked="True" Click="DryRun_Click" Content="Dry run - check and show the plan, write nothing"/>
                         <CheckBox x:Name="VerifyCheck" IsChecked="True" Content="Verify bit-for-bit after copying (doubles the time)"/>
                         <CheckBox x:Name="GptCheck" IsChecked="True" Content="Fix partition table so the extra space is usable"/>
+                        <CheckBox x:Name="GrowCheck" IsChecked="True"
+                                  Content="Give the extra space to the main partition"
+                                  ToolTip="Partitions after the main (largest) one, e.g. recovery, are written at the end of the bigger disk, and the main partition is extended into the space in between - all in this one run."/>
                         <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
                             <TextBlock Text="Block size" VerticalAlignment="Center" Margin="0,0,10,0"/>
                             <ComboBox x:Name="BlockCombo" Width="110" SelectedIndex="2">

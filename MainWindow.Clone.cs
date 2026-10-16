@@ -36,7 +36,8 @@ public partial class MainWindow
         bool dryRun = DryRunCheck.IsChecked == true;
         if (!dryRun && !ConfirmLive(src, dst)) return;
 
-        var opt = new CloneOptions(src, dst, SelectedBlockBytes(), GptCheck.IsChecked == true, VerifyCheck.IsChecked == true, dryRun);
+        var opt = new CloneOptions(src, dst, SelectedBlockBytes(), GptCheck.IsChecked == true, VerifyCheck.IsChecked == true, dryRun,
+            GrowMain: GrowCheck.IsChecked == true);
         LogBox.Clear();
         SetBusy(true);
         _cts = new System.Threading.CancellationTokenSource();

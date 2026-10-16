@@ -98,13 +98,20 @@ internal static partial class PartitionTable
         for (int i = 0; i < 4; i++)
         {
             int at = MbrEntryTable + i * MbrEntrySize;
-            if (mbr[at + MbrTypeOffset] == 0) continue;
+            byte type = mbr[at + MbrTypeOffset];
+            if (type == 0) continue;
             long start = BinaryPrimitives.ReadUInt32LittleEndian(mbr.AsSpan(at + MbrStartOffset));
             long size = BinaryPrimitives.ReadUInt32LittleEndian(mbr.AsSpan(at + MbrSizeOffset));
-            parts.Add(new PartitionInfo(i + 1, "", start * bps, (start + size) * bps));
+            parts.Add(new PartitionInfo(i + 1, IsExtendedType(type) ? ExtendedName : "", start * bps, (start + size) * bps));
         }
+        parts.Sort((a, b) => a.StartByte.CompareTo(b.StartByte));
         return new DiskLayout("MBR", parts, -1);
     }
+
+    /// <summary>Name given to an MBR extended container (it holds logical partitions, not data).</summary>
+    public const string ExtendedName = "Extended";
+
+    internal static bool IsExtendedType(byte type) => type is 0x05 or 0x0F or 0x85;
 
     /// <summary>
     /// Regions a clone onto a LARGER GPT disk deliberately changes: protective MBR + primary

@@ -82,6 +82,29 @@ public static class PartitionManager
         CheckReturn(outParams, "resize the partition");
     }
 
+    /// <summary>Partition number Windows currently uses for the partition starting at <paramref name="offset"/>, or null.</summary>
+    public static int? FindPartitionNumberAt(int disk, long offset)
+    {
+        using var searcher = new ManagementObjectSearcher(Connect(), new ObjectQuery(
+            $"SELECT PartitionNumber, Offset FROM MSFT_Partition WHERE DiskNumber = {disk}"));
+        foreach (ManagementObject mo in searcher.Get())
+            if (ToLong(mo["Offset"]) == offset) return Convert.ToInt32(mo["PartitionNumber"]);
+        return null;
+    }
+
+    /// <summary>Asks Windows storage management to re-read every disk (like Update-HostStorageCache). Best effort.</summary>
+    public static void RefreshCache()
+    {
+        try
+        {
+            using var setting = new ManagementClass(StorageNamespace + ":MSFT_StorageSetting");
+            setting.InvokeMethod("UpdateHostStorageCache", null);
+        }
+        catch (ManagementException) { }
+        catch (COMException) { }
+        catch (UnauthorizedAccessException) { }
+    }
+
     private static ManagementScope Connect()
     {
         var scope = new ManagementScope(StorageNamespace);

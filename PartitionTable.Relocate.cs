@@ -12,7 +12,7 @@ internal static partial class PartitionTable
     /// Move the backup table to the real last sector, widen the usable area and fix all CRCs, so
     /// Windows sees a valid GPT and the extra space shows up as unallocated (ready to extend).
     /// </summary>
-    public static void RelocateBackupGpt(SafeFileHandle dst, DiskGeometry geo, Action<string> log)
+    public static void RelocateBackupGpt(SafeFileHandle dst, DiskGeometry geo, Action<string> log, bool wipeStale = true)
     {
         int bps = geo.BytesPerSector;
         long newLast = geo.Sectors - 1;
@@ -37,9 +37,10 @@ internal static partial class PartitionTable
         BinaryPrimitives.WriteInt64LittleEndian(backup.AsSpan(72), newLast - entrySectors);
         SetHeaderCrc(backup, h.HeaderSize);
 
-        // 1) wipe the stale backup copy (primary is still valid if anything fails here)
+        // 1) wipe the stale backup copy (primary is still valid if anything fails here). Skipped when
+        //    partitions were moved towards the end: that area may now hold a moved partition.
         long oldStart = h.AlternateLba - entrySectors;
-        NativeDisk.Write(dst, new byte[(entrySectors + 1) * bps], oldStart * bps);
+        if (wipeStale) NativeDisk.Write(dst, new byte[(entrySectors + 1) * bps], oldStart * bps);
         // 2) new backup table + header at the real end of the disk
         NativeDisk.Write(dst, entries, (newLast - entrySectors) * bps);
         NativeDisk.Write(dst, backup, newLast * bps);

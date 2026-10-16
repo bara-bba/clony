@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Win32.SafeHandles;
@@ -13,15 +15,16 @@ public sealed record CloneOptions(
     int BufferBytes,        // read/write block size
     bool MoveBackupGpt,     // fix GPT so the extra space on a bigger disk is usable
     bool VerifyAfter,       // bit-for-bit compare after the copy
-    bool DryRun);           // checks + plan only, writes nothing
+    bool DryRun,            // checks + plan only, writes nothing
+    bool GrowMain = false); // move partitions after the main one to the end and give it the extra space
 
 public sealed record CloneResult(bool Success, VerifyResult? Verify, string Message);
 
 /// <summary>
-/// Bit-for-bit disk clone: every sector of the source is copied to the same offset on the destination,
-/// so partition table, EFI, Windows, recovery and boot data are identical and the copy boots as-is.
-/// The source is only ever opened read-only. Both disks are taken offline during the copy so Windows
-/// can't write to either one mid-copy; the source is brought back online afterwards.
+/// Bit-for-bit disk clone. Every sector of the source is copied, so partition table, EFI, Windows, recovery
+/// and boot data are identical and the copy boots as-is. With GrowMain, partitions after the main one are
+/// written at the end of the bigger disk instead of the same offset, and the main partition is extended
+/// into the space between. The source is only ever read; volumes on both disks are locked during the copy.
 /// </summary>
 public sealed class CloneEngine
 {
@@ -45,46 +48,101 @@ public sealed class CloneEngine
             DiskPart.EnsureOnline(opt.Source.Index, _log);
             DiskPart.EnsureOnline(opt.Destination.Index, _log);
             var (sg, dg, layout) = Inspect(opt);
-            LogPlan(opt, sg, dg, layout);
+            GrowPlan? plan = null;
+            string? noGrow = null;
+            if (opt.GrowMain) (plan, noGrow) = GrowPlanner.Build(layout, sg, dg);
+            LogPlan(opt, sg, dg, layout, plan, noGrow);
             if (opt.DryRun)
                 return Done(true, null, "Dry run complete - nothing was written. Untick 'Dry run' to clone for real.");
 
             _log(Banner("PREPARE"));
             DiskPart.ClearReadOnly(opt.Destination.Index, _log);
-            using var srcLocks = VolumeLocks.Lock(opt.Source.Index, _log);
-            using var dstLocks = VolumeLocks.Lock(opt.Destination.Index, _log);
+            var extents = plan?.Extents ?? new[] { new CopyExtent(0, 0, sg.LengthBytes) };
+            var grower = new CopyGrower(_log);
+            VolumeLocks? srcLocks = null, dstLocks = null;
             try
             {
-                Copy(opt, sg, ct);
+                srcLocks = VolumeLocks.Lock(opt.Source.Index, _log);
+                dstLocks = VolumeLocks.Lock(opt.Destination.Index, _log);
+                Copy(opt, sg, extents, ct);
                 if (ct.IsCancellationRequested)
                     return Done(false, null, "Cancelled. The destination is INCOMPLETE and won't boot - run the clone again before using it.");
 
-                if (opt.MoveBackupGpt && layout.IsGpt && dg.LengthBytes > sg.LengthBytes)
+                var expected = new List<(long Start, long Length)>();
+                if (plan != null) expected.AddRange(ApplyPlan(opt, layout, plan));
+                else if (opt.MoveBackupGpt && layout.IsGpt && dg.LengthBytes > sg.LengthBytes)
+                {
                     FixPartitionTable(opt);
+                    expected.AddRange(PartitionTable.ExpectedCloneChanges(layout, sg, dg));
+                }
 
                 VerifyResult? verify = null;
                 if (opt.VerifyAfter)
                 {
                     _log(Banner("VERIFY"));
-                    verify = Verifier.CompareDisks(opt.Source.Index, opt.Destination.Index, opt.BufferBytes, _progress, ct);
+                    using var s = NativeDisk.OpenRead(opt.Source.Index);
+                    using var d = NativeDisk.OpenRead(opt.Destination.Index);
+                    verify = Verifier.CompareMapped(s, sg, d, dg, layout, extents, expected, opt.BufferBytes, _progress, ct);
                     _log(VerifySummary(verify));
                 }
-
                 bool ok = verify == null || verify.Identical;
-                return Done(ok, verify, ok
-                    ? "Clone complete. The copy is left OFFLINE on purpose: eject it, put it in the PC and boot from it. " +
-                      "Don't connect it together with the original again."
-                    : "Clone finished but the verify found unexpected differences - see the Verify page. Do NOT rely on this copy.");
+                if (!ok)
+                    return Done(false, verify, "Clone finished but the verify found unexpected differences - see the Verify page. Do NOT rely on this copy.");
+
+                string? growNote = null;
+                if (plan != null)
+                {
+                    _log(Banner("EXTEND"));
+                    grower.HideSource(opt.Source.Index);
+                    dstLocks.Dispose();
+                    dstLocks = null;
+                    string? failed = grower.Extend(opt.Destination.Index, plan, ct);
+                    growNote = failed == null
+                        ? $" {plan.Grow.Label} on the copy now uses the extra {PhysicalDisk.FormatSize(plan.DeltaBytes)}."
+                        : $" The extra {PhysicalDisk.FormatSize(plan.DeltaBytes)} is free right after {plan.Grow.Label}, but wasn't added to it " +
+                          $"({failed}). Extend it on the Partitions page when the original isn't plugged in.";
+                    if (failed != null) _log("! " + growNote.Trim());
+                }
+                return Done(true, verify,
+                    "Clone complete." + growNote + " The copy is left OFFLINE on purpose: eject it, put it in the PC and boot from it. " +
+                    "Don't connect it together with the original again.");
             }
             finally
             {
-                // Still holding the volume locks: Windows never gets to see two identical disks online.
+                // The copy goes offline while locked, BEFORE the original reappears: Windows never sees two identical disks online.
+                if (dstLocks == null) dstLocks = TryRelock(opt.Destination.Index);
                 TakeCopyOffline(opt);
+                dstLocks?.Dispose();
+                srcLocks?.Dispose();
+                grower.ShowSource(opt.Source.Index);
             }
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             return Done(false, null, $"ERROR: {ex.Message}");
+        }
+    }
+
+    private List<(long Start, long Length)> ApplyPlan(CloneOptions opt, DiskLayout layout, GrowPlan plan)
+    {
+        _log(Banner("PARTITION TABLE"));
+        using var dst = NativeDisk.OpenWrite(opt.Destination.Index);
+        var changedOnCopy = PartitionTable.ApplyGrowPlan(dst, NativeDisk.GetGeometry(dst), layout, plan, _log);
+        // The verify reports in source positions: map each changed range on the copy back through the extents.
+        var result = new List<(long, long)>();
+        foreach (var (start, length) in changedOnCopy)
+            foreach (var e in plan.Extents)
+                if (start >= e.DstStart && start < e.DstStart + e.Length) { result.Add((start - e.Shift, length)); break; }
+        return result;
+    }
+
+    private VolumeLocks? TryRelock(int disk)
+    {
+        try { return VolumeLocks.Lock(disk, _log); }
+        catch (Exception ex) when (ex is InvalidOperationException or Win32Exception)
+        {
+            _log($"! Could not lock the copy's volumes again ({ex.Message}).");
+            return null;
         }
     }
 
@@ -128,26 +186,44 @@ public sealed class CloneEngine
         return (sg, dg, PartitionTable.Read(src, sg));
     }
 
-    private void LogPlan(CloneOptions opt, DiskGeometry sg, DiskGeometry dg, DiskLayout layout)
+    private void LogPlan(CloneOptions opt, DiskGeometry sg, DiskGeometry dg, DiskLayout layout, GrowPlan? plan, string? noGrow)
     {
         _log(Banner(opt.DryRun ? "PLAN (DRY RUN)" : "PLAN"));
         _log($"Source      : {opt.Source.Caption}  [{sg.LengthBytes:N0} bytes, {sg.BytesPerSector} B sectors]");
         _log($"Destination : {opt.Destination.Caption}  [{dg.LengthBytes:N0} bytes]");
         _log($"Layout      : {layout.Style}, {layout.Partitions.Count} partition(s)");
         foreach (var p in layout.Partitions)
-            _log($"   {p.Label,-40} {PhysicalDisk.FormatSize(p.SizeBytes),12}  @ {p.StartByte:N0}");
-        _log($"Copy        : all {PhysicalDisk.FormatSize(sg.LengthBytes)}, block {PhysicalDisk.FormatSize(opt.BufferBytes)}");
+        {
+            string where = plan == null ? "" : p == plan.Grow ? "   stays, gets the extra space"
+                : plan.Moved.Contains(p) ? $"   -> moved to @ {p.StartByte + plan.DeltaBytes:N0}" : "   stays";
+            _log($"   {p.Label,-40} {PhysicalDisk.FormatSize(p.SizeBytes),12}  @ {p.StartByte:N0}{where}");
+        }
         long extra = dg.LengthBytes - sg.LengthBytes;
-        if (extra > 0)
-            _log($"Extra space : {PhysicalDisk.FormatSize(extra)} will be unallocated - " +
-                 (!layout.IsGpt ? "MBR disk, extend into it later in Disk Management"
-                  : opt.MoveBackupGpt ? "GPT fixed so Windows can extend into it"
-                  : "GPT NOT fixed (tick the option to use the space)"));
-        _log($"Verify      : {(opt.VerifyAfter ? "yes, full bit-for-bit compare" : "no")}");
+        if (plan != null)
+        {
+            _log($"Copy        : {PhysicalDisk.FormatSize(plan.BytesToCopy)}, block {PhysicalDisk.FormatSize(opt.BufferBytes)}" +
+                 (plan.Moved.Count > 0 ? "; partitions after the main one are written at the end of the destination" : ""));
+            _log($"Extra space : {PhysicalDisk.FormatSize(plan.DeltaBytes)} added to {plan.Grow.Label} at the end of the clone " +
+                 "(the original is hidden from Windows for that moment)");
+            if (!layout.IsGpt && plan.Moved.Count > 0)
+                _log("Note        : on MBR disks Windows finds its recovery tools by position. If a recovery partition moves, " +
+                     "'reagentc /info' on the copy may show it disabled; Windows itself boots normally.");
+        }
+        else
+        {
+            _log($"Copy        : all {PhysicalDisk.FormatSize(sg.LengthBytes)}, block {PhysicalDisk.FormatSize(opt.BufferBytes)}");
+            if (extra > 0)
+                _log($"Extra space : {PhysicalDisk.FormatSize(extra)} will be unallocated - " +
+                     (noGrow != null ? $"can't give it to the main partition ({noGrow}); " : "") +
+                     (!layout.IsGpt ? "MBR disk, extend into it later in Disk Management"
+                      : opt.MoveBackupGpt ? "GPT fixed so Windows can extend into it"
+                      : "GPT NOT fixed (tick the option to use the space)"));
+        }
+        _log($"Verify      : {(opt.VerifyAfter ? "yes, full bit-for-bit compare" + (plan?.Moved.Count > 0 ? " (moved partitions checked at their new place)" : "") : "no")}");
         _log("");
     }
 
-    private void Copy(CloneOptions opt, DiskGeometry sg, CancellationToken ct)
+    private void Copy(CloneOptions opt, DiskGeometry sg, IReadOnlyList<CopyExtent> extents, CancellationToken ct)
     {
         _log(Banner("COPY"));
         using var src = NativeDisk.OpenRead(opt.Source.Index);
@@ -156,24 +232,30 @@ public sealed class CloneEngine
         var front = new byte[chunk];
         var back = new byte[chunk];
         var throttle = new ProgressThrottle(_progress, "Copying");
-        long total = sg.LengthBytes, offset = 0;
+        long total = extents.Sum(e => e.Length), done = 0;
         Task pendingWrite = Task.CompletedTask;
 
-        while (offset < total && !ct.IsCancellationRequested)
+        foreach (var e in extents)
         {
-            int len = (int)Math.Min(chunk, total - offset);
-            ReadSource(src, front, offset, len, opt.Source.Index);   // read next block while the previous one is written
-            WaitWrite(pendingWrite, opt.Destination.Index);
-            byte[] buf = front; long at = offset; int n = len;
-            pendingWrite = Task.Run(() => NativeDisk.Write(dst, buf, at, n));
-            (front, back) = (back, front);
-            offset += len;
-            throttle.Report(offset, total);
+            if (e.Shift != 0) _log($"Writing {PhysicalDisk.FormatSize(e.Length)} from byte {e.SrcStart:N0} to {e.DstStart:N0} on the destination.");
+            long offset = e.SrcStart;
+            while (offset < e.SrcEnd && !ct.IsCancellationRequested)
+            {
+                int len = (int)Math.Min(chunk, e.SrcEnd - offset);
+                ReadSource(src, front, offset, len, opt.Source.Index);   // read next block while the previous one is written
+                WaitWrite(pendingWrite, opt.Destination.Index);
+                byte[] buf = front; long at = offset + e.Shift; int n = len;
+                pendingWrite = Task.Run(() => NativeDisk.Write(dst, buf, at, n));
+                (front, back) = (back, front);
+                offset += len;
+                done += len;
+                throttle.Report(done, total);
+            }
         }
         WaitWrite(pendingWrite, opt.Destination.Index);
         NativeDisk.Flush(dst);
-        throttle.Report(offset, total, force: true);
-        _log($"Copied {offset:N0} bytes in {throttle.Elapsed:hh\\:mm\\:ss}.");
+        throttle.Report(done, total, force: true);
+        _log($"Copied {done:N0} bytes in {throttle.Elapsed:hh\\:mm\\:ss}.");
     }
 
     private static void ReadSource(SafeFileHandle src, byte[] buffer, long offset, int len, int disk)

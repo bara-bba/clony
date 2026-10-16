@@ -18,6 +18,7 @@ internal static class NativeDisk
     private const uint IOCTL_DISK_GET_LENGTH_INFO = 0x0007405C;
     private const uint IOCTL_DISK_GET_DRIVE_GEOMETRY_EX = 0x000700A0;
     private const uint IOCTL_DISK_SET_DISK_ATTRIBUTES = 0x0007C0F4;
+    private const uint IOCTL_DISK_UPDATE_PROPERTIES = 0x00070140;
     private const ulong DISK_ATTRIBUTE_OFFLINE = 1;
     private const int SetDiskAttributesSize = 40;
     private const int GeometryBytesPerSectorOffset = 20;
@@ -52,23 +53,37 @@ internal static class NativeDisk
     }
 
     /// <summary>
-    /// Persistently marks the disk offline through our own write handle, while its volumes are still
-    /// locked — so Windows never sees two identical disks online and never re-signs the copy.
+    /// Marks the disk offline through a handle. Persist=true survives reboots (used for the copy);
+    /// persist=false only lasts until the disk is replugged or the PC restarts and writes nothing to the
+    /// disk (used to hide the source for a moment).
     /// </summary>
-    public static void SetOffline(SafeFileHandle device)
+    public static void SetOffline(SafeFileHandle device, bool persist = true) =>
+        SetAttributes(device, DISK_ATTRIBUTE_OFFLINE, persist, "Could not take the disk offline.");
+
+    public static void SetOnline(SafeFileHandle device, bool persist = false) =>
+        SetAttributes(device, 0, persist, "Could not bring the disk back online.");
+
+    /// <summary>Makes Windows re-read the partition table it has cached for this disk.</summary>
+    public static void UpdateProperties(SafeFileHandle device)
+    {
+        if (!DeviceIoControl(device, IOCTL_DISK_UPDATE_PROPERTIES, IntPtr.Zero, 0, null, 0, out _, IntPtr.Zero))
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Windows could not re-read the copy's partition table.");
+    }
+
+    private static void SetAttributes(SafeFileHandle device, ulong attributes, bool persist, string error)
     {
         // SET_DISK_ATTRIBUTES: Version, Persist, 3 reserved, Attributes, AttributesMask, 4x reserved DWORD
         var input = new byte[SetDiskAttributesSize];
         BitConverter.GetBytes(SetDiskAttributesSize).CopyTo(input, 0);
-        input[4] = 1;                                               // persist across reboots
-        BitConverter.GetBytes(DISK_ATTRIBUTE_OFFLINE).CopyTo(input, 8);
+        input[4] = persist ? (byte)1 : (byte)0;
+        BitConverter.GetBytes(attributes).CopyTo(input, 8);
         BitConverter.GetBytes(DISK_ATTRIBUTE_OFFLINE).CopyTo(input, 16);
         var pinned = GCHandle.Alloc(input, GCHandleType.Pinned);
         try
         {
             if (!DeviceIoControl(device, IOCTL_DISK_SET_DISK_ATTRIBUTES, pinned.AddrOfPinnedObject(), (uint)input.Length,
                     null, 0, out _, IntPtr.Zero))
-                throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not take the copy offline.");
+                throw new Win32Exception(Marshal.GetLastWin32Error(), error);
         }
         finally { pinned.Free(); }
     }

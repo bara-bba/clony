@@ -141,7 +141,7 @@ public partial class MainWindow : Window
     {
         _busy = busy;
         foreach (var c in new Control[] { CloneButton, VerifyButton, RefreshButton, SourceCombo, DestCombo,
-                     VerifySourceCombo, VerifyDestCombo, DryRunCheck, VerifyCheck, GptCheck, BlockCombo, ConfirmBox,
+                     VerifySourceCombo, VerifyDestCombo, DryRunCheck, VerifyCheck, GptCheck, GrowCheck, BlockCombo, ConfirmBox,
                      ScanButton, ScanDiskCombo, ScanStartBox, ScanSlowCombo,
                      FormatButton, FormatDiskCombo, FormatStyleCombo, FormatFsCombo, FormatLabelBox, FormatFullCheck, FormatConfirmBox, DiskList })
             c.IsEnabled = !busy;

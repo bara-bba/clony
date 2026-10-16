@@ -57,42 +57,60 @@ public static class Verifier
     internal static VerifyResult CompareHandles(SafeFileHandle src, DiskGeometry sg, SafeFileHandle dst, DiskGeometry dg,
         int bufferBytes, IProgress<CopyProgress>? progress, CancellationToken ct)
     {
-        int bps = sg.BytesPerSector;
-        if (dg.BytesPerSector != bps)
-            throw new InvalidOperationException($"Sector sizes differ ({bps} B vs {dg.BytesPerSector} B) - these disks can't be bit-for-bit copies.");
+        if (dg.BytesPerSector != sg.BytesPerSector)
+            throw new InvalidOperationException($"Sector sizes differ ({sg.BytesPerSector} B vs {dg.BytesPerSector} B) - these disks can't be bit-for-bit copies.");
         if (dg.LengthBytes < sg.LengthBytes)
             throw new InvalidOperationException("The second disk is smaller than the first, so it can't hold a full copy. Did you swap them?");
-
         var layout = PartitionTable.Read(src, sg);
-        var acc = new DiffAccumulator(layout, PartitionTable.ExpectedCloneChanges(layout, sg, dg));
+        return CompareMapped(src, sg, dst, dg, layout, new[] { new CopyExtent(0, 0, sg.LengthBytes) },
+            PartitionTable.ExpectedCloneChanges(layout, sg, dg), bufferBytes, progress, ct);
+    }
+
+    /// <summary>
+    /// Compares each source extent with where it was copied to on the destination. Differences are reported
+    /// in SOURCE positions; <paramref name="expected"/> (also source positions) are changes made on purpose.
+    /// </summary>
+    internal static VerifyResult CompareMapped(SafeFileHandle src, DiskGeometry sg, SafeFileHandle dst, DiskGeometry dg,
+        DiskLayout layout, IReadOnlyList<CopyExtent> extents, IReadOnlyList<(long Start, long Length)> expected,
+        int bufferBytes, IProgress<CopyProgress>? progress, CancellationToken ct)
+    {
+        int bps = sg.BytesPerSector;
+        var acc = new DiffAccumulator(layout, expected);
         int chunk = Math.Max(bps, bufferBytes - bufferBytes % bps);
         var a = new byte[chunk];
         var b = new byte[chunk];
         var throttle = new ProgressThrottle(progress, "Verifying");
-        long total = sg.LengthBytes, offset = 0;
+        long total = 0, done = 0;
+        foreach (var e in extents) total += e.Length;
         bool cancelled = false;
 
-        while (offset < total)
+        foreach (var extent in extents)
         {
-            if (ct.IsCancellationRequested) { cancelled = true; break; }
-            int len = (int)Math.Min(chunk, total - offset);
-            long at = offset;
-            var readDst = Task.Run(() => NativeDisk.ReadInto(dst, b, at, len));
-            NativeDisk.ReadInto(src, a, at, len);
-            readDst.GetAwaiter().GetResult();
+            long offset = extent.SrcStart;
+            while (offset < extent.SrcEnd)
+            {
+                if (ct.IsCancellationRequested) { cancelled = true; break; }
+                int len = (int)Math.Min(chunk, extent.SrcEnd - offset);
+                long at = offset, dstAt = offset + extent.Shift;
+                var readDst = Task.Run(() => NativeDisk.ReadInto(dst, b, dstAt, len));
+                NativeDisk.ReadInto(src, a, at, len);
+                readDst.GetAwaiter().GetResult();
 
-            var sa = a.AsSpan(0, len);
-            var sb = b.AsSpan(0, len);
-            if (!sa.SequenceEqual(sb))
-                for (int i = 0; i < len; i += bps)
-                    if (!sa.Slice(i, bps).SequenceEqual(sb.Slice(i, bps))) acc.Mark(at + i, bps);
+                var sa = a.AsSpan(0, len);
+                var sb = b.AsSpan(0, len);
+                if (!sa.SequenceEqual(sb))
+                    for (int i = 0; i < len; i += bps)
+                        if (!sa.Slice(i, bps).SequenceEqual(sb.Slice(i, bps))) acc.Mark(at + i, bps);
 
-            offset += len;
-            throttle.Report(offset, total);
+                offset += len;
+                done += len;
+                throttle.Report(done, total);
+            }
+            if (cancelled) break;
         }
         acc.Close();
-        throttle.Report(offset, total, force: true);
-        return acc.ToResult(offset, sg.LengthBytes, dg.LengthBytes, throttle.Elapsed, cancelled);
+        throttle.Report(done, total, force: true);
+        return acc.ToResult(done, sg.LengthBytes, dg.LengthBytes, throttle.Elapsed, cancelled);
     }
 }
 
@@ -151,6 +169,6 @@ internal sealed class DiffAccumulator
 
     private string Describe() =>
         _openPartition >= 0 ? _layout.Partitions[_openPartition].Label
-        : _openExpected ? "Partition table (GPT)"
+        : _openExpected ? "Partition table"
         : "Outside any partition";
 }

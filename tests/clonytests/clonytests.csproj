@@ -1,0 +1,16 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Image-file tests for clony's partition moves and verify. No physical disk is touched.
+       Run: dotnet run (in this folder) followed by an empty folder for about 1.5 GB of sparse test images -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>clonytests</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\clony.csproj" />
+  </ItemGroup>
+</Project>
+
