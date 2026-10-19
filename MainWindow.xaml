@@ -109,6 +109,7 @@
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
@@ -132,7 +133,43 @@
                 </Grid>
             </Border>
 
-            <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0,0,0,12">
+            <!-- Layout preview: source and resulting copy on one scale. Click a source partition to give it the extra space. -->
+            <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0,0,0,12" Padding="16,12">
+                <StackPanel>
+                    <Grid Margin="0,0,0,8">
+                        <TextBlock Text="LAYOUT · click a source partition to give it the extra space" Style="{StaticResource SectionTitle}" Margin="0"/>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                            <Border Width="12" Height="12" CornerRadius="2" Background="#FF3C78D8" Margin="0,0,6,0"/>
+                            <TextBlock Text="Same place" Style="{StaticResource Caption}" Margin="0,0,14,0"/>
+                            <Border Width="12" Height="12" CornerRadius="2" Background="{StaticResource OkBrush}" Margin="0,0,6,0"/>
+                            <TextBlock Text="Gets the extra space" Style="{StaticResource Caption}" Margin="0,0,14,0"/>
+                            <Border Width="12" Height="12" CornerRadius="2" Background="{StaticResource WarnBrush}" Margin="0,0,6,0"/>
+                            <TextBlock Text="Moved to the end" Style="{StaticResource Caption}" Margin="0,0,14,0"/>
+                            <Border Width="12" Height="12" CornerRadius="2" Background="#FF0A0A0A"
+                                    BorderBrush="{StaticResource LineBrush}" BorderThickness="1" Margin="0,0,6,0"/>
+                            <TextBlock Text="Unallocated" Style="{StaticResource Caption}"/>
+                        </StackPanel>
+                    </Grid>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="70"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="58"/>
+                            <RowDefinition Height="6"/>
+                            <RowDefinition Height="58"/>
+                        </Grid.RowDefinitions>
+                        <TextBlock Text="Source" VerticalAlignment="Center" Style="{StaticResource Caption}"/>
+                        <Grid Grid.Column="1" x:Name="CloneSourceBar"/>
+                        <TextBlock Grid.Row="2" Text="Copy" VerticalAlignment="Center" Style="{StaticResource Caption}"/>
+                        <Grid Grid.Row="2" Grid.Column="1" x:Name="CloneCopyBar"/>
+                    </Grid>
+                    <TextBlock x:Name="ClonePreviewText" Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="70,8,0,0"/>
+                </StackPanel>
+            </Border>
+
+            <Border Grid.Row="2" Style="{StaticResource Card}" Margin="0,0,0,12">
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
@@ -144,9 +181,9 @@
                         <CheckBox x:Name="DryRunCheck" IsChecked="True" Click="DryRun_Click" Content="Dry run - check and show the plan, write nothing"/>
                         <CheckBox x:Name="VerifyCheck" IsChecked="True" Content="Verify bit-for-bit after copying (doubles the time)"/>
                         <CheckBox x:Name="GptCheck" IsChecked="True" Content="Fix partition table so the extra space is usable"/>
-                        <CheckBox x:Name="GrowCheck" IsChecked="True"
-                                  Content="Give the extra space to the main partition"
-                                  ToolTip="Partitions after the main (largest) one, e.g. recovery, are written at the end of the bigger disk, and the main partition is extended into the space in between - all in this one run."/>
+                        <CheckBox x:Name="GrowCheck" IsChecked="True" Click="GrowCheck_Click"
+                                  Content="Give the extra space to the selected partition"
+                                  ToolTip="Partitions after the selected one (click it in the layout; default is the largest), e.g. recovery, are written at the end of the bigger disk, and the selected partition is extended into the space in between - all in this one run."/>
                         <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
                             <TextBlock Text="Block size" VerticalAlignment="Center" Margin="0,0,10,0"/>
                             <ComboBox x:Name="BlockCombo" Width="110" SelectedIndex="2">
@@ -166,13 +203,13 @@
                 </Grid>
             </Border>
 
-            <Border Grid.Row="2" Style="{StaticResource Card}" Padding="12">
+            <Border Grid.Row="3" Style="{StaticResource Card}" Padding="12">
                 <TextBox x:Name="LogBox" IsReadOnly="True" Background="Transparent" BorderThickness="0" Padding="0"
                          FontFamily="Cascadia Mono, Consolas" FontSize="12" TextWrapping="NoWrap"
                          VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"/>
             </Border>
 
-            <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+            <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
                 <Button x:Name="CloneButton" Content="Run dry run" Style="{StaticResource AccentButton}" Click="Clone_Click"/>
             </StackPanel>
         </Grid>

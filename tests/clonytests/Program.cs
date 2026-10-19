@@ -18,9 +18,11 @@ static class Program
 
     static void Check(bool ok, string name) { Console.WriteLine((ok ? "PASS " : "FAIL ") + name); if (!ok) fails++; }
 
+    [STAThread]
     static int Main(string[] args)
     {
         Dir = args[0];
+        if (args.Length > 1 && args[1] == "--render") return RenderClonePage(args[2]);
         Mbr();
         Gpt();
         Refusals();
@@ -278,5 +280,78 @@ static class Program
         Check(r.Plan == null && r.Reason!.Contains("logical"), "refuse: main partition inside an extended container");
         var noMove = GrowPlanner.Build(layout, sg, new DiskGeometry(1024 * MB, Bps)).Plan;
         Check(noMove != null && noMove.Moved.Count == 0 && noMove.Extents.Count == 2, "no partitions after main: copy + plain extend");
+
+        // Choosing the partition: the user's pick wins over "largest"; logical partitions can't be picked.
+        var four = new DiskLayout("MBR", new[]
+        {
+            new PartitionInfo(1, "", 1 * MB, 9 * MB),
+            new PartitionInfo(2, "", 9 * MB, 209 * MB),
+            new PartitionInfo(3, "", 209 * MB, 217 * MB),
+            new PartitionInfo(4, PartitionTable.ExtendedName, 217 * MB, 247 * MB),
+            new PartitionInfo(5, "", 218 * MB, 246 * MB),
+        }, -1);
+        var big = new DiskGeometry(1024 * MB, Bps);
+        var pick1 = GrowPlanner.Build(four, sg, big, growAt: 1 * MB).Plan;
+        Check(pick1 != null && pick1.Grow.Number == 1 && pick1.Moved.Count == 4, "pick: first partition grows, all others move (same order)");
+        var pick3 = GrowPlanner.Build(four, sg, big, growAt: 209 * MB).Plan;
+        Check(pick3 != null && pick3.Grow.Number == 3 && pick3.Moved.Count == 2 && pick3.Extents[0].Length == 217 * MB, "pick: recovery grows, only extended+logical move");
+        var pickLogical = GrowPlanner.Build(four, sg, big, growAt: 218 * MB);
+        Check(pickLogical.Plan == null && pickLogical.Reason!.Contains("logical"), "pick: logical partition refused");
+        Check(GrowPlanner.Build(four, sg, big, growAt: 123 * MB).Plan == null, "pick: unknown start refused");
+        Check(GrowPlanner.Build(four, sg, big).Plan!.Grow.Number == 2, "pick: default is the largest");
+    }
+// ---------------- off-screen render of the Clone page layout preview (reads disks, writes nothing) ----
+    static int RenderClonePage(string outPrefix)
+    {
+        var app = new System.Windows.Application { ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown };
+        app.Resources.MergedDictionaries.Add(new System.Windows.ResourceDictionary { Source = new Uri("pack://application:,,,/clony;component/Theme.xaml") });
+        app.Resources.MergedDictionaries.Add(new System.Windows.ResourceDictionary { Source = new Uri("pack://application:,,,/clony;component/Controls.xaml") });
+        AccentTheme.Apply(AccentTheme.Default);
+        var win = new MainWindow { Left = -20000, Top = 0, Width = 1100, Height = 900, ShowInTaskbar = false, ShowActivated = false };
+        win.Show();
+        var status = (System.Windows.Controls.TextBlock)win.FindName("StatusText");
+        var srcCombo = (System.Windows.Controls.ComboBox)win.FindName("SourceCombo");
+        for (int i = 0; i < 90 && (srcCombo.Items.Count < 2 || status.Text.StartsWith("Scanning")); i++) Pump(1000);
+        Pump(3000);
+        var dstCombo = (System.Windows.Controls.ComboBox)win.FindName("DestCombo");
+        var disks = srcCombo.Items.Cast<PhysicalDisk>().OrderBy(d => d.SizeBytes).ToList();
+        if (disks.Count < 2) { Console.WriteLine("INFO need two disks to render"); return 1; }
+        srcCombo.SelectedItem = disks[0];
+        dstCombo.SelectedItem = disks[^1];
+        Pump(1500);
+        Snap(win, outPrefix + "_default.png");
+        var text = (System.Windows.Controls.TextBlock)win.FindName("ClonePreviewText");
+        Console.WriteLine("INFO default: " + text.Text.Replace("\n", " | "));
+
+        // click the first source partition, as a user would
+        var srcBar = (System.Windows.Controls.Grid)win.FindName("CloneSourceBar");
+        var first = ((System.Windows.Controls.Grid)srcBar.Children[0]).Children.OfType<System.Windows.Controls.Border>().First();
+        first.RaiseEvent(new System.Windows.Input.MouseButtonEventArgs(System.Windows.Input.Mouse.PrimaryDevice, 0, System.Windows.Input.MouseButton.Left)
+            { RoutedEvent = System.Windows.UIElement.MouseLeftButtonUpEvent });
+        Pump(800);
+        Snap(win, outPrefix + "_picked.png");
+        Console.WriteLine("INFO picked: " + text.Text.Replace("\n", " | "));
+        win.Close();
+        return 0;
+    }
+
+    static void Pump(int ms)
+    {
+        var frame = new System.Windows.Threading.DispatcherFrame();
+        var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(ms) };
+        timer.Tick += (_, _) => { timer.Stop(); frame.Continue = false; };
+        timer.Start();
+        System.Windows.Threading.Dispatcher.PushFrame(frame);
+    }
+
+    static void Snap(System.Windows.Window win, string path)
+    {
+        var root = (System.Windows.FrameworkElement)win.Content;
+        var bmp = new System.Windows.Media.Imaging.RenderTargetBitmap((int)root.ActualWidth, (int)root.ActualHeight, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
+        bmp.Render(root);
+        var enc = new System.Windows.Media.Imaging.PngBitmapEncoder();
+        enc.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(bmp));
+        using var fs = File.Create(path);
+        enc.Save(fs);
     }
 }

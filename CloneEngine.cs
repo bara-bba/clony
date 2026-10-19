@@ -16,7 +16,8 @@ public sealed record CloneOptions(
     bool MoveBackupGpt,     // fix GPT so the extra space on a bigger disk is usable
     bool VerifyAfter,       // bit-for-bit compare after the copy
     bool DryRun,            // checks + plan only, writes nothing
-    bool GrowMain = false); // move partitions after the main one to the end and give it the extra space
+    bool GrowMain = false,  // move partitions after the chosen one to the end and give it the extra space
+    long? GrowAt = null);   // start byte of the partition that gets the space (null = the largest)
 
 public sealed record CloneResult(bool Success, VerifyResult? Verify, string Message);
 
@@ -50,7 +51,7 @@ public sealed class CloneEngine
             var (sg, dg, layout) = Inspect(opt);
             GrowPlan? plan = null;
             string? noGrow = null;
-            if (opt.GrowMain) (plan, noGrow) = GrowPlanner.Build(layout, sg, dg);
+            if (opt.GrowMain) (plan, noGrow) = GrowPlanner.Build(layout, sg, dg, opt.GrowAt);
             LogPlan(opt, sg, dg, layout, plan, noGrow);
             if (opt.DryRun)
                 return Done(true, null, "Dry run complete - nothing was written. Untick 'Dry run' to clone for real.");

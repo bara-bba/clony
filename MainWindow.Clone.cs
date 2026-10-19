@@ -8,7 +8,11 @@ public partial class MainWindow
 {
     private const int Megabyte = 1024 * 1024;
 
-    private void Selection_Changed(object sender, SelectionChangedEventArgs e) => UpdateCloneButton();
+    private void Selection_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        UpdateCloneButton();
+        UpdateClonePreview();
+    }
 
     private void DryRun_Click(object sender, RoutedEventArgs e) => UpdateCloneButton();
 
@@ -37,7 +41,7 @@ public partial class MainWindow
         if (!dryRun && !ConfirmLive(src, dst)) return;
 
         var opt = new CloneOptions(src, dst, SelectedBlockBytes(), GptCheck.IsChecked == true, VerifyCheck.IsChecked == true, dryRun,
-            GrowMain: GrowCheck.IsChecked == true);
+            GrowMain: GrowCheck.IsChecked == true, GrowAt: SelectedGrowAt(src));
         LogBox.Clear();
         SetBusy(true);
         _cts = new System.Threading.CancellationTokenSource();

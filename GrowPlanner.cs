@@ -30,15 +30,24 @@ public static class GrowPlanner
     public const long Alignment = 1024 * 1024;          // keep moved partitions on 1 MB boundaries
     private const long MbrMaxSectors = uint.MaxValue;   // MBR stores 32-bit sector numbers
 
-    /// <summary>Builds the plan, or returns the reason it can't be done (then clony falls back to a straight copy).</summary>
-    public static (GrowPlan? Plan, string? Reason) Build(DiskLayout layout, DiskGeometry src, DiskGeometry dst)
+    /// <summary>
+    /// Builds the plan, or returns the reason it can't be done (then clony falls back to a straight copy).
+    /// <paramref name="growAt"/> picks the partition (by start byte) that gets the space; null = the largest.
+    /// </summary>
+    public static (GrowPlan? Plan, string? Reason) Build(DiskLayout layout, DiskGeometry src, DiskGeometry dst, long? growAt = null)
     {
         int bps = src.BytesPerSector;
         if (layout.Style is not ("MBR" or "GPT")) return (null, "the source has no partition table");
         if (dst.LengthBytes <= src.LengthBytes) return (null, "the destination isn't bigger than the source");
 
-        var grow = layout.Partitions.Where(p => !IsExtended(p)).OrderByDescending(p => p.SizeBytes).FirstOrDefault();
-        if (grow == null) return (null, "the source has no data partition");
+        var candidates = layout.Partitions.Where(p => !IsExtended(p));
+        var grow = growAt is long at
+            ? candidates.FirstOrDefault(p => p.StartByte == at)
+            : candidates.OrderByDescending(p => p.SizeBytes).FirstOrDefault();
+        if (grow == null)
+            return (null, growAt != null
+                ? "the chosen partition isn't a partition clony can grow (an MBR logical partition, or no longer on the disk)"
+                : "the source has no data partition");
         if (layout.Partitions.Any(p => IsExtended(p) && p.StartByte <= grow.StartByte && p.EndByte >= grow.EndByte))
             return (null, "the main partition is a logical partition inside an MBR extended partition");
 

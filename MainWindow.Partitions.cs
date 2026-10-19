@@ -44,6 +44,7 @@ public partial class MainWindow
             Status("Could not read partitions: " + ex.Message);
         }
         RenderPartitionDisks(restoreSelection: true);
+        UpdateClonePreview();
     }
 
     /// <summary>Redraws the bars. restoreSelection re-queries the selected partition (after a refresh).</summary>
