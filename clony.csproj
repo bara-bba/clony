@@ -11,6 +11,7 @@
     <ApplicationIcon>app.ico</ApplicationIcon>
     <AssemblyName>clony</AssemblyName>
     <RootNamespace>clony</RootNamespace>
+    <Version>0.1.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
